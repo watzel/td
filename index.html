@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Defense</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            background: #2a4a2a;
+            cursor: crosshair;
+        }
+        
+        .ui {
+            margin-top: 10px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .tower-select {
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 8px 16px;
+            background: #4a4a4a;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #5a5a5a;
+        }
+        
+        button.selected {
+            background: #4a7c59;
+        }
+    </style>
+</head>
+<body>
+    <h1>Tower Defense Game</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div class="ui">
+        <div class="stats">
+            <div>Lives: <span id="lives">10</span></div>
+            <div>Gold: <span id="gold">100</span></div>
+            <div>Wave: <span id="wave">1</span></div>
+        </div>
+        
+        <div class="tower-select">
+            <button id="basicTower" class="selected">Basic Tower ($20)</button>
+            <button id="fastTower">Fast Tower ($30)</button>
+            <button id="strongTower">Strong Tower ($50)</button>
+        </div>
+        
+        <button id="startWave">Start Wave</button>
+    </div>
+
+    <script>
+        // Game state
+        const game = {
+            canvas: document.getElementById('gameCanvas'),
+            ctx: null,
+            width: 800,
+            height: 600,
+            selectedTowerType: 'basic',
+            lives: 10,
+            gold: 100,
+            wave: 1,
+            waveActive: false,
+            towers: [],
+            enemies: [],
+            projectiles: [],
+            path: [
+                {x: 0, y: 300},
+                {x: 200, y: 300},
+                {x: 200, y: 150},
+                {x: 400, y: 150},
+                {x: 400, y: 450},
+                {x: 600, y: 450},
+                {x: 600, y: 300},
+                {x: 800, y: 300}
+            ]
+        };
+
+        // Initialize game
+        function init() {
+            game.ctx = game.canvas.getContext('2d');
+            setupEventListeners();
+            gameLoop();
+        }
+
+        // Event listeners
+        function setupEventListeners() {
+            game.canvas.addEventListener('click', handleCanvasClick);
+            
+            document.getElementById('basicTower').addEventListener('click', () => selectTower('basic'));
+            document.getElementById('fastTower').addEventListener('click', () => selectTower('fast'));
+            document.getElementById('strongTower').addEventListener('click', () => selectTower('strong'));
+            document.getElementById('startWave').addEventListener('click', startWave);
+        }
+
+        function selectTower(type) {
+            game.selectedTowerType = type;
+            document.querySelectorAll('.tower-select button').forEach(btn => btn.classList.remove('selected'));
+            document.getElementById(type + 'Tower').classList.add('selected');
+        }
+
+        function handleCanvasClick(e) {
+            const rect = game.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            placeTower(x, y);
+        }
+
+        // Tower placement
+        function placeTower(x, y) {
+            const towerTypes = {
+                basic: { cost: 20, damage: 25, range: 80, fireRate: 1000, color: '#4a7c59' },
+                fast: { cost: 30, damage: 15, range: 70, fireRate: 500, color: '#7c4a59' },
+                strong: { cost: 50, damage: 50, range: 90, fireRate: 1500, color: '#59654a' }
+            };
+            
+            const type = towerTypes[game.selectedTowerType];
+            
+            if (game.gold < type.cost) return;
+            if (isOnPath(x, y, 30)) return; // Don't place on path
+            if (isTooCloseToOtherTowers(x, y, 40)) return;
+            
+            game.towers.push({
+                x, y,
+                ...type,
+                lastFire: 0
+            });
+            
+            game.gold -= type.cost;
+            updateUI();
+        }
+
+        function isOnPath(x, y, buffer) {
+            for (let i = 0; i < game.path.length - 1; i++) {
+                const start = game.path[i];
+                const end = game.path[i + 1];
+                
+                if (distanceToLineSegment(x, y, start.x, start.y, end.x, end.y) < buffer) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function isTooCloseToOtherTowers(x, y, minDistance) {
+            return game.towers.some(tower => 
+                Math.hypot(tower.x - x, tower.y - y) < minDistance
+            );
+        }
+
+        function distanceToLineSegment(px, py, x1, y1, x2, y2) {
+            const A = px - x1;
+            const B = py - y1;
+            const C = x2 - x1;
+            const D = y2 - y1;
+            
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            let param = -1;
+            
+            if (lenSq !== 0) param = dot / lenSq;
+            
+            let xx, yy;
+            if (param < 0) {
+                xx = x1;
+                yy = y1;
+            } else if (param > 1) {
+                xx = x2;
+                yy = y2;
+            } else {
+                xx = x1 + param * C;
+                yy = y1 + param * D;
+            }
+            
+            return Math.hypot(px - xx, py - yy);
+        }
+
+        // Wave management
+        function startWave() {
+            if (game.waveActive) return;
+            
+            game.waveActive = true;
+            spawnEnemies();
+        }
+
+        function spawnEnemies() {
+            const enemyCount = 5 + game.wave * 2;
+            let spawned = 0;
+            
+            const spawnInterval = setInterval(() => {
+                if (spawned >= enemyCount) {
+                    clearInterval(spawnInterval);
+                    return;
+                }
+                
+                game.enemies.push({
+                    x: game.path[0].x,
+                    y: game.path[0].y,
+                    health: 50 + game.wave * 10,
+                    maxHealth: 50 + game.wave * 10,
+                    speed: 1 + game.wave * 0.1,
+                    pathIndex: 0,
+                    pathProgress: 0,
+                    reward: 10 + game.wave * 2
+                });
+                
+                spawned++;
+            }, 800);
+        }
+
+        // Game logic
+        function updateGame() {
+            updateEnemies();
+            updateTowers();
+            updateProjectiles();
+            checkWaveComplete();
+        }
+
+        function updateEnemies() {
+            for (let i = game.enemies.length - 1; i >= 0; i--) {
+                const enemy = game.enemies[i];
+                
+                // Move enemy along path
+                if (enemy.pathIndex < game.path.length - 1) {
+                    const current = game.path[enemy.pathIndex];
+                    const next = game.path[enemy.pathIndex + 1];
+                    
+                    const dx = next.x - current.x;
+                    const dy = next.y - current.y;
+                    const distance = Math.hypot(dx, dy);
+                    
+                    enemy.pathProgress += enemy.speed / distance;
+                    
+                    if (enemy.pathProgress >= 1) {
+                        enemy.pathIndex++;
+                        enemy.pathProgress = 0;
+                    }
+                    
+                    if (enemy.pathIndex < game.path.length - 1) {
+                        const currentPos = game.path[enemy.pathIndex];
+                        const nextPos = game.path[enemy.pathIndex + 1];
+                        
+                        enemy.x = currentPos.x + (nextPos.x - currentPos.x) * enemy.pathProgress;
+                        enemy.y = currentPos.y + (nextPos.y - currentPos.y) * enemy.pathProgress;
+                    }
+                } else {
+                    // Enemy reached end
+                    game.lives--;
+                    game.enemies.splice(i, 1);
+                    updateUI();
+                    
+                    if (game.lives <= 0) {
+                        alert('Game Over!');
+                        location.reload();
+                    }
+                }
+                
+                // Remove dead enemies
+                if (enemy.health <= 0) {
+                    game.gold += enemy.reward;
+                    game.enemies.splice(i, 1);
+                    updateUI();
+                }
+            }
+        }
+
+        function updateTowers() {
+            const now = Date.now();
+            
+            game.towers.forEach(tower => {
+                if (now - tower.lastFire < tower.fireRate) return;
+                
+                // Find closest enemy in range
+                let target = null;
+                let closestDistance = tower.range;
+                
+                game.enemies.forEach(enemy => {
+                    const distance = Math.hypot(enemy.x - tower.x, enemy.y - tower.y);
+                    if (distance < closestDistance) {
+                        target = enemy;
+                        closestDistance = distance;
+                    }
+                });
+                
+                if (target) {
+                    // Fire projectile
+                    game.projectiles.push({
+                        x: tower.x,
+                        y: tower.y,
+                        targetX: target.x,
+                        targetY: target.y,
+                        damage: tower.damage,
+                        speed: 5
+                    });
+                    
+                    tower.lastFire = now;
+                }
+            });
+        }
+
+        function updateProjectiles() {
+            for (let i = game.projectiles.length - 1; i >= 0; i--) {
+                const proj = game.projectiles[i];
+                
+                const dx = proj.targetX - proj.x;
+                const dy = proj.targetY - proj.y;
+                const distance = Math.hypot(dx, dy);
+                
+                if (distance < proj.speed) {
+                    // Hit target area, find enemy to damage
+                    let hitEnemy = null;
+                    let closestDistance = 20; // Hit radius
+                    
+                    game.enemies.forEach(enemy => {
+                        const dist = Math.hypot(enemy.x - proj.targetX, enemy.y - proj.targetY);
+                        if (dist < closestDistance) {
+                            hitEnemy = enemy;
+                            closestDistance = dist;
+                        }
+                    });
+                    
+                    if (hitEnemy) {
+                        hitEnemy.health -= proj.damage;
+                    }
+                    
+                    game.projectiles.splice(i, 1);
+                } else {
+                    // Move projectile
+                    proj.x += (dx / distance) * proj.speed;
+                    proj.y += (dy / distance) * proj.speed;
+                }
+            }
+        }
+
+        function checkWaveComplete() {
+            if (game.waveActive && game.enemies.length === 0) {
+                game.waveActive = false;
+                game.wave++;
+                game.gold += 50; // Wave completion bonus
+                updateUI();
+            }
+        }
+
+        // Rendering
+        function render() {
+            game.ctx.clearRect(0, 0, game.width, game.height);
+            
+            drawPath();
+            drawTowers();
+            drawEnemies();
+            drawProjectiles();
+        }
+
+        function drawPath() {
+            game.ctx.strokeStyle = '#4a4a4a';
+            game.ctx.lineWidth = 40;
+            game.ctx.lineCap = 'round';
+            game.ctx.lineJoin = 'round';
+            
+            game.ctx.beginPath();
+            game.ctx.moveTo(game.path[0].x, game.path[0].y);
+            
+            for (let i = 1; i < game.path.length; i++) {
+                game.ctx.lineTo(game.path[i].x, game.path[i].y);
+            }
+            
+            game.ctx.stroke();
+        }
+
+        function drawTowers() {
+            game.towers.forEach(tower => {
+                game.ctx.fillStyle = tower.color;
+                game.ctx.beginPath();
+                game.ctx.arc(tower.x, tower.y, 15, 0, Math.PI * 2);
+                game.ctx.fill();
+                
+                // Draw range when selected tower type matches
+                if (game.selectedTowerType === 'basic' && tower.cost === 20 ||
+                    game.selectedTowerType === 'fast' && tower.cost === 30 ||
+                    game.selectedTowerType === 'strong' && tower.cost === 50) {
+                    game.ctx.strokeStyle = tower.color + '40';
+                    game.ctx.lineWidth = 1;
+                    game.ctx.beginPath();
+                    game.ctx.arc(tower.x, tower.y, tower.range, 0, Math.PI * 2);
+                    game.ctx.stroke();
+                }
+            });
+        }
+
+        function drawEnemies() {
+            game.enemies.forEach(enemy => {
+                // Enemy body
+                game.ctx.fillStyle = '#ff4444';
+                game.ctx.beginPath();
+                game.ctx.arc(enemy.x, enemy.y, 12, 0, Math.PI * 2);
+                game.ctx.fill();
+                
+                // Health bar
+                const barWidth = 20;
+                const barHeight = 4;
+                const healthPercent = enemy.health / enemy.maxHealth;
+                
+                game.ctx.fillStyle = '#333';
+                game.ctx.fillRect(enemy.x - barWidth/2, enemy.y - 20, barWidth, barHeight);
+                
+                game.ctx.fillStyle = healthPercent > 0.5 ? '#4f4' : healthPercent > 0.25 ? '#ff4' : '#f44';
+                game.ctx.fillRect(enemy.x - barWidth/2, enemy.y - 20, barWidth * healthPercent, barHeight);
+            });
+        }
+
+        function drawProjectiles() {
+            game.ctx.fillStyle = '#ffff44';
+            game.projectiles.forEach(proj => {
+                game.ctx.beginPath();
+                game.ctx.arc(proj.x, proj.y, 3, 0, Math.PI * 2);
+                game.ctx.fill();
+            });
+        }
+
+        function updateUI() {
+            document.getElementById('lives').textContent = game.lives;
+            document.getElementById('gold').textContent = game.gold;
+            document.getElementById('wave').textContent = game.wave;
+        }
+
+        // Game loop
+        function gameLoop() {
+            updateGame();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        init();
+    </script>
+</body>
+</html>
